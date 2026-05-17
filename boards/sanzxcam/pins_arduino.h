@@ -10,7 +10,7 @@
 // Main SPI Bus
 #define SPI_SS_PIN 21
 #define SPI_MOSI_PIN 45
-#define SPI_MISO_PIN 42
+#define SPI_MISO_PIN -1
 #define SPI_SCK_PIN 47
 
 static const uint8_t SS = SPI_SS_PIN;
@@ -36,12 +36,12 @@ static const uint8_t SCL = GROVE_SCL;
 #define TFT_WIDTH 240
 #define TFT_HEIGHT 320
 #define TFT_MOSI SPI_MOSI_PIN
-#define TFT_MISO SPI_MISO_PIN
+#define TFT_MISO -1
 #define TFT_SCLK SPI_SCK_PIN
 #define TFT_CS SPI_SS_PIN
 #define TFT_DC 14
 #define TFT_RST 1
-#define TFT_BL -1 // Not specified
+#define TFT_BL 38 // Not specified
 
 #define SPI_FREQUENCY 40000000
 #define SPI_READ_FREQUENCY 20000000
@@ -60,7 +60,7 @@ static const uint8_t SCL = GROVE_SCL;
 #define BTN_ALIAS "\"OK\""
 #define HAS_3_BUTTONS
 #define SEL_BTN 0
-#define UP_BTN 41
+#define UP_BTN 2
 #define DW_BTN 3
 #define ESC_BTN 46
 #define BTN_ACT LOW

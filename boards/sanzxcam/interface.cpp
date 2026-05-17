@@ -62,6 +62,10 @@ void _setup_gpio() {
     btnEsc = new Button(btEsc);
     btnEsc->attachSingleClickEventCb(&onButtonSingleClickCbEsc, NULL);
 
+    // setup backlight
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
+
     Serial.begin(115200);
 }
 
@@ -70,7 +74,12 @@ void _setup_gpio() {
 **  set brightness value
 **********************************************************************/
 void _setBrightness(uint8_t brightval) {
-    // No backlight pin specified for this board
+    if (brightval == 0) {
+        analogWrite(TFT_BL, 0);
+    } else {
+        int bl = MINBRIGHT + round(((255 - MINBRIGHT) * brightval / 100));
+        analogWrite(TFT_BL, bl);
+    }
 }
 
 /*********************************************************************
