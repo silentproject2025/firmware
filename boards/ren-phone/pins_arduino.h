@@ -158,16 +158,18 @@ static const uint8_t SCK = SPI_SCK_PIN;
 
 // =============================================
 // IR / RF default pins (external modules on free GPIOs)
+// NOTE: in a header these lists must NOT be wrapped in single quotes
+// (the quotes are only stripped when passed as -D flags in an .ini file).
 // =============================================
 #define TXLED 17
 #define RXLED 16
 #define LED_ON HIGH
 #define LED_OFF LOW
 
-#define IR_TX_PINS '{{"GPIO17", 17}, {"GPIO16", 16}, {"GPIO1", 1}}'
-#define IR_RX_PINS '{{"GPIO16", 16}, {"GPIO17", 17}, {"GPIO1", 1}}'
-#define RF_TX_PINS '{{"GPIO17", 17}, {"GPIO16", 16}, {"GPIO1", 1}}'
-#define RF_RX_PINS '{{"GPIO16", 16}, {"GPIO17", 17}, {"GPIO1", 1}}'
+#define IR_TX_PINS {{"GPIO17", 17}, {"GPIO16", 16}, {"GPIO1", 1}}
+#define IR_RX_PINS {{"GPIO16", 16}, {"GPIO17", 17}, {"GPIO1", 1}}
+#define RF_TX_PINS {{"GPIO17", 17}, {"GPIO16", 16}, {"GPIO1", 1}}
+#define RF_RX_PINS {{"GPIO16", 16}, {"GPIO17", 17}, {"GPIO1", 1}}
 
 // =============================================
 // Serial (GPS) on UART0 pins
