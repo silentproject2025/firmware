@@ -41,7 +41,7 @@ DEFAULT_ENVS=(
   lilygo-t-display-S3-pro
   lilygo-t-display-ttgo
   lilygo-t-hmi
-  ren-phone
+  accretion-phone
   lilygo-t-lora-pager
   elecrow-24B
   elecrow-28B

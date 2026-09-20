@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #ifndef DEVICE_NAME
-#define DEVICE_NAME "Ren Phone"
+#define DEVICE_NAME "Accretion Phone"
 #endif
 
 // =============================================
@@ -33,7 +33,7 @@ static const uint8_t SCL = GROVE_SCL;
 // =============================================
 // External-module SPI bus (CC1101 / NRF24 / W5500 ...)
 // Uses pins that are NOT used by the display, touch, SD, mic, IMU or PSRAM.
-// (41/42/17 were the MAX98357A speaker pins on the original Ren Phone wiring.)
+// (41/42/17 were the MAX98357A speaker pins on the original Accretion Phone wiring.)
 // =============================================
 #define SPI_SCK_PIN 41
 #define SPI_MOSI_PIN 42
@@ -97,16 +97,16 @@ static const uint8_t SCK = SPI_SCK_PIN;
 #define SPI_FREQUENCY 40000000
 #define SPI_READ_FREQUENCY 16000000
 #define SPI_TOUCH_FREQUENCY 2000000
-// Touch is read on its own bus (see ren-phone.ini), not through TFT_eSPI
+// Touch is read on its own bus (see accretion-phone.ini), not through TFT_eSPI
 #define TOUCH_CS -1
 
 #define HAS_SCREEN 1
-#define ROTATION 1 // landscape (same as Ren Phone's own landscape mode)
+#define ROTATION 1 // landscape (same as Accretion Phone's own landscape mode)
 #define MINBRIGHT 1
 #define BACKLIGHT 21
 
 // =============================================
-// Touch - XPT2046 (pins are in ren-phone.ini)
+// Touch - XPT2046 (pins are in accretion-phone.ini)
 // =============================================
 #define HAS_TOUCH 1
 
@@ -144,7 +144,7 @@ static const uint8_t SCK = SPI_SCK_PIN;
 // =============================================
 // Vibration motor (Bruce has no driver for it; the pin is just kept low)
 // =============================================
-#define REN_VIB_PIN 18
+#define ACCRETION_VIB_PIN 18
 
 // =============================================
 // Boot button (GPIO0) - used only for wake-up from deep sleep

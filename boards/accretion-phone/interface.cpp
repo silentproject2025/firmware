@@ -1,5 +1,5 @@
 /*
- * Ren Phone - DIY ESP32-S3 handheld
+ * Accretion Phone - DIY ESP32-S3 handheld
  * Board interface for Bruce firmware
  *
  * Hardware:
@@ -18,24 +18,23 @@
 #include <Arduino.h>
 #include <globals.h>
 #include <math.h>
-#include <esp_partition.h>
 #include <interface.h>
 
 // SD card SDIO pins (1-bit mode)
-#define REN_SD_CLK 39
-#define REN_SD_CMD 38
-#define REN_SD_D0 40
+#define ACCRETION_SD_CLK 39
+#define ACCRETION_SD_CMD 38
+#define ACCRETION_SD_D0 40
 
 // Backlight PWM (attached after the TFT is initialised)
-#define REN_BL_FREQ 5000
-#define REN_BL_BITS 8
+#define ACCRETION_BL_FREQ 5000
+#define ACCRETION_BL_BITS 8
 
-// Optional touch axis inversion, set from ren-phone.ini
-#ifndef REN_TOUCH_INVERT_X
-#define REN_TOUCH_INVERT_X 0
+// Optional touch axis inversion, set from accretion-phone.ini
+#ifndef ACCRETION_TOUCH_INVERT_X
+#define ACCRETION_TOUCH_INVERT_X 0
 #endif
-#ifndef REN_TOUCH_INVERT_Y
-#define REN_TOUCH_INVERT_Y 0
+#ifndef ACCRETION_TOUCH_INVERT_Y
+#define ACCRETION_TOUCH_INVERT_Y 0
 #endif
 
 // XPT2046 is read in software SPI (same approach as the original CYD boards):
@@ -47,17 +46,17 @@ CYD28_TouchR touch(320, 240);
 // Touch calibration (XPT2046)
 // The default CYD28_TouchR_CAL_* values are tuned for the CYD, not for this
 // panel, so the first boot runs a 4-corner calibration. The result is stored in
-// LittleFS and on the SD card (/ren_touch.conf). To redo it later, keep a finger
+// LittleFS and on the SD card (/accretion_touch.conf). To redo it later, keep a finger
 // on the screen while the phone boots.
 // ---------------------------------------------------------------------------
-#define REN_CAL_FILE "/renTouchCal"      // LittleFS copy
-#define REN_CAL_SD_FILE "/ren_touch.conf" // SD card copy
-#define REN_CAL_MARGIN 20
-#define REN_CAL_TIMEOUT_MS 120000
-#define REN_CAL_MIN_SPAN 1000 // min raw distance between the two calibrated edges
+#define ACCRETION_CAL_FILE "/accretionTouchCal"      // LittleFS copy
+#define ACCRETION_CAL_SD_FILE "/accretion_touch.conf" // SD card copy
+#define ACCRETION_CAL_MARGIN 20
+#define ACCRETION_CAL_TIMEOUT_MS 120000
+#define ACCRETION_CAL_MIN_SPAN 1000 // min raw distance between the two calibrated edges
 
-static bool renCalValid(int xmin, int xmax, int ymin, int ymax) {
-    if (abs(xmax - xmin) < REN_CAL_MIN_SPAN || abs(ymax - ymin) < REN_CAL_MIN_SPAN) return false;
+static bool accretionCalValid(int xmin, int xmax, int ymin, int ymax) {
+    if (abs(xmax - xmin) < ACCRETION_CAL_MIN_SPAN || abs(ymax - ymin) < ACCRETION_CAL_MIN_SPAN) return false;
     if (xmin < -1500 || xmin > 5600 || xmax < -1500 || xmax > 5600) return false;
     if (ymin < -1500 || ymin > 5600 || ymax < -1500 || ymax > 5600) return false;
     return true;
@@ -65,7 +64,7 @@ static bool renCalValid(int xmin, int xmax, int ymin, int ymax) {
 
 // Read 5 values (xmin, xmax, ymin, ymax, swap) from a calibration file.
 // Accepts "key=value" lines as well as plain numbers, one per line.
-static bool renReadCalFile(FS &fs, const char *path, int v[5]) {
+static bool accretionReadCalFile(FS &fs, const char *path, int v[5]) {
     File f = fs.open(path, FILE_READ);
     if (!f) return false;
     for (int i = 0; i < 5; i++) {
@@ -81,10 +80,10 @@ static bool renReadCalFile(FS &fs, const char *path, int v[5]) {
         v[i] = line.toInt();
     }
     f.close();
-    return renCalValid(v[0], v[1], v[2], v[3]);
+    return accretionCalValid(v[0], v[1], v[2], v[3]);
 }
 
-static bool renWriteCalFile(FS &fs, const char *path, int xmin, int xmax, int ymin, int ymax, bool swap) {
+static bool accretionWriteCalFile(FS &fs, const char *path, int xmin, int xmax, int ymin, int ymax, bool swap) {
     File f = fs.open(path, FILE_WRITE);
     if (!f) return false;
     f.printf("xmin=%d\nxmax=%d\nymin=%d\nymax=%d\nswap=%d\n", xmin, xmax, ymin, ymax, swap ? 1 : 0);
@@ -92,131 +91,30 @@ static bool renWriteCalFile(FS &fs, const char *path, int xmin, int xmax, int ym
     return true;
 }
 
-static bool renSdReady() { return sdcardMounted || setupSdCard(); }
+static bool accretionSdReady() { return sdcardMounted || setupSdCard(); }
 
 // SD card is checked first, then LittleFS. Whichever copy is missing gets re-created.
-static bool renLoadTouchCal() {
+static bool accretionLoadTouchCal() {
     int v[5];
-    bool sd = renSdReady();
-    bool fromSd = sd && renReadCalFile(SD, REN_CAL_SD_FILE, v);
-    bool fromFlash = !fromSd && renReadCalFile(LittleFS, REN_CAL_FILE, v);
+    bool sd = accretionSdReady();
+    bool fromSd = sd && accretionReadCalFile(SD, ACCRETION_CAL_SD_FILE, v);
+    bool fromFlash = !fromSd && accretionReadCalFile(LittleFS, ACCRETION_CAL_FILE, v);
     if (!fromSd && !fromFlash) return false;
 
     touch.setCalibration(v[0], v[1], v[2], v[3], v[4] != 0);
-    Serial.printf(
-        "Touch cal loaded from %s: X %d..%d  Y %d..%d  swap=%d\n",
-        fromSd ? "SD" : "LittleFS",
-        v[0],
-        v[1],
-        v[2],
-        v[3],
-        v[4]
-    );
     // keep both copies in sync
-    if (fromFlash && sd) renWriteCalFile(SD, REN_CAL_SD_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
-    if (fromSd && !LittleFS.exists(REN_CAL_FILE)) renWriteCalFile(LittleFS, REN_CAL_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
+    if (fromFlash && sd) accretionWriteCalFile(SD, ACCRETION_CAL_SD_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
+    if (fromSd && !LittleFS.exists(ACCRETION_CAL_FILE)) accretionWriteCalFile(LittleFS, ACCRETION_CAL_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
     return true;
 }
 
-static void renSaveTouchCal(int xmin, int xmax, int ymin, int ymax, bool swap) {
-    bool okFlash = renWriteCalFile(LittleFS, REN_CAL_FILE, xmin, xmax, ymin, ymax, swap);
-    bool sd = renSdReady();
-    bool okSd = sd && renWriteCalFile(SD, REN_CAL_SD_FILE, xmin, xmax, ymin, ymax, swap);
-    Serial.printf("Touch cal saved: LittleFS=%d SD=%d (%s)\n", okFlash, okSd, REN_CAL_SD_FILE);
-}
-
-// ---------------------------------------------------------------------------
-// SD card self-test. Bruce keeps bruce.conf (theme, colors, settings) on LittleFS and
-// copies it to the SD card only when the card is mounted. If nothing ever shows up on
-// the card, the mount or the write is failing - this reports which one.
-// ---------------------------------------------------------------------------
-static void renShowSdError(const char *l1, const char *l2) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.drawCentreString(l1, tft.width() / 2, tft.height() / 2 - 16, 2);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawCentreString(l2, tft.width() / 2, tft.height() / 2 + 8, 1);
-    delay(2500);
-    tft.fillScreen(TFT_BLACK);
-}
-
-static bool renWriteTest(FS &fs, const char *path) {
-    File f = fs.open(path, FILE_WRITE);
-    size_t n = f ? f.print("ok") : 0;
-    if (f) f.close();
-    fs.remove(path);
-    return n == 2;
-}
-
-// LittleFS write failed: collect details, try format + remount, and show everything on screen.
-static void renFsRecover() {
-    const esp_partition_t *part =
-        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-    size_t total0 = LittleFS.totalBytes();
-    File f = LittleFS.open("/ren_fs_test.tmp", FILE_WRITE);
-    bool opened = (bool)f;
-    size_t wrote = f ? f.print("ok") : 0;
-    if (f) f.close();
-    LittleFS.remove("/ren_fs_test.tmp");
-
-    LittleFS.end();
-    bool formatted = LittleFS.format();
-    bool remounted = setupLittleFS();
-    bool okAfter = remounted && renWriteTest(LittleFS, "/ren_fs_test.tmp");
-    if (okAfter) bruceConfig.saveFile();
-
-    char l[5][48];
-    if (part) snprintf(l[0], sizeof(l[0]), "partisi: 0x%X size 0x%X", (unsigned)part->address, (unsigned)part->size);
-    else snprintf(l[0], sizeof(l[0]), "partisi LittleFS: TIDAK ADA");
-    snprintf(l[1], sizeof(l[1]), "flash chip: %u MB", (unsigned)(ESP.getFlashChipSize() / (1024 * 1024)));
-    snprintf(l[2], sizeof(l[2]), "total=%u open=%d tulis=%u", (unsigned)total0, opened, (unsigned)wrote);
-    snprintf(l[3], sizeof(l[3]), "format=%d mount=%d tulis=%d", formatted, remounted, okAfter);
-    snprintf(l[4], sizeof(l[4]), okAfter ? "SETELAH FORMAT: OK" : "SETELAH FORMAT: MASIH GAGAL");
-    for (int i = 0; i < 5; i++) Serial.printf("[FS] %s\n", l[i]);
-
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.drawString("LittleFS gagal ditulis", 4, 4, 2);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    for (int i = 0; i < 5; i++) tft.drawString(l[i], 4, 34 + i * 14, 1);
-    delay(9000);
-    tft.fillScreen(TFT_BLACK);
-}
-
-static void renSdSelfTest() {
-    // 1) LittleFS: bruce.conf is written here FIRST. If this fails, nothing reaches the SD card either.
-    bool flashOk = renWriteTest(LittleFS, "/ren_fs_test.tmp");
-    Serial.printf(
-        "[FS] LittleFS used %u / %u bytes, write test=%d, bruce.conf=%d\n",
-        (unsigned)LittleFS.usedBytes(),
-        (unsigned)LittleFS.totalBytes(),
-        flashOk,
-        LittleFS.exists("/bruce.conf")
-    );
-    if (!flashOk) renFsRecover();
-
-    // 2) SD card mount + write
-    bool mounted = sdcardMounted || setupSdCard();
-    Serial.printf("[SD] mounted=%d (CLK=%d CMD=%d D0=%d)\n", mounted, REN_SD_CLK, REN_SD_CMD, REN_SD_D0);
-    if (!mounted) {
-        renShowSdError("SD card tidak terbaca", "Cek kabel SDIO, pull-up, format FAT32");
-        return;
-    }
-    bool sdWriteOk = renWriteTest(SD, "/ren_sd_test.tmp");
-    bool confOnSd = SD.exists("/bruce.conf");
-    Serial.printf(
-        "[SD] type=%d size=%llu MB, write test=%d, bruce.conf=%d\n",
-        (int)SD.cardType(),
-        (unsigned long long)(SD.cardSize() / (1024ULL * 1024ULL)),
-        sdWriteOk,
-        confOnSd
-    );
-    if (!sdWriteOk) renShowSdError("SD card gagal ditulis", "Kartu ke-mount tapi tidak bisa menulis");
-    else if (!confOnSd) renShowSdError("bruce.conf belum ada di SD", "Salinan config ke SD gagal dibuat");
+static void accretionSaveTouchCal(int xmin, int xmax, int ymin, int ymax, bool swap) {
+    accretionWriteCalFile(LittleFS, ACCRETION_CAL_FILE, xmin, xmax, ymin, ymax, swap);
+    if (accretionSdReady()) accretionWriteCalFile(SD, ACCRETION_CAL_SD_FILE, xmin, xmax, ymin, ymax, swap);
 }
 
 // true while the finger stays down for ~1.2 s right at boot
-static bool renTouchHeldAtBoot() {
+static bool accretionTouchHeldAtBoot() {
     if (!touch.touched()) return false;
     uint32_t t0 = millis();
     while (millis() - t0 < 1200) {
@@ -226,7 +124,7 @@ static bool renTouchHeldAtBoot() {
     return true;
 }
 
-static void renDrawTarget(int x, int y, uint16_t color) {
+static void accretionDrawTarget(int x, int y, uint16_t color) {
     tft.drawFastHLine(x - 10, y, 21, color);
     tft.drawFastVLine(x, y - 10, 21, color);
     tft.drawCircle(x, y, 6, color);
@@ -234,7 +132,7 @@ static void renDrawTarget(int x, int y, uint16_t color) {
 
 // Wait for a press, average the raw readings, wait for release.
 // Returns false only on timeout.
-static bool renCaptureRaw(uint32_t deadline, int16_t &rx, int16_t &ry) {
+static bool accretionCaptureRaw(uint32_t deadline, int16_t &rx, int16_t &ry) {
     while (true) {
         while (!touch.touched()) {
             if (millis() > deadline) return false;
@@ -266,12 +164,12 @@ static bool renCaptureRaw(uint32_t deadline, int16_t &rx, int16_t &ry) {
     }
 }
 
-static void renCalibrateTouch() {
+static void accretionCalibrateTouch() {
     uint8_t oldRotation = bruceConfigPins.rotation;
     tft.setRotation(1); // calibrate in landscape, independent of the saved rotation
     const int W = tft.width();
     const int H = tft.height();
-    const int m = REN_CAL_MARGIN;
+    const int m = ACCRETION_CAL_MARGIN;
     // order: 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
     const int tx[4] = {m, W - m, m, W - m};
     const int ty[4] = {m, m, H - m, H - m};
@@ -280,16 +178,16 @@ static void renCalibrateTouch() {
     for (int attempt = 0; attempt < 3 && !done; attempt++) {
         int16_t rx[4], ry[4];
         bool timeout = false;
-        uint32_t deadline = millis() + REN_CAL_TIMEOUT_MS;
+        uint32_t deadline = millis() + ACCRETION_CAL_TIMEOUT_MS;
 
         for (int i = 0; i < 4 && !timeout; i++) {
             tft.fillScreen(TFT_BLACK);
             tft.setTextColor(TFT_WHITE, TFT_BLACK);
             tft.drawCentreString("Kalibrasi Touch", W / 2, H / 2 - 20, 2);
             tft.drawCentreString("Sentuh titik + (pakai ujung pena/kuku)", W / 2, H / 2 + 4, 1);
-            renDrawTarget(tx[i], ty[i], TFT_YELLOW);
-            if (!renCaptureRaw(deadline, rx[i], ry[i])) timeout = true;
-            else renDrawTarget(tx[i], ty[i], TFT_GREEN);
+            accretionDrawTarget(tx[i], ty[i], TFT_YELLOW);
+            if (!accretionCaptureRaw(deadline, rx[i], ry[i])) timeout = true;
+            else accretionDrawTarget(tx[i], ty[i], TFT_GREEN);
         }
         if (timeout) break;
 
@@ -316,14 +214,10 @@ static void renCalibrateTouch() {
         int xmin = lroundf(xl - kx * m), xmax = lroundf(xr + kx * m);
         int ymin = lroundf(yt - ky * m), ymax = lroundf(yb + ky * m);
 
-        Serial.printf(
-            "Touch cal try %d: X %d..%d  Y %d..%d  swap=%d  sane=%d\n", attempt, xmin, xmax, ymin, ymax, swap, sane
-        );
-
         tft.fillScreen(TFT_BLACK);
-        if (sane && renCalValid(xmin, xmax, ymin, ymax)) {
+        if (sane && accretionCalValid(xmin, xmax, ymin, ymax)) {
             touch.setCalibration(xmin, xmax, ymin, ymax, swap);
-            renSaveTouchCal(xmin, xmax, ymin, ymax, swap);
+            accretionSaveTouchCal(xmin, xmax, ymin, ymax, swap);
             tft.setTextColor(TFT_GREEN, TFT_BLACK);
             tft.drawCentreString("Kalibrasi selesai", W / 2, H / 2 - 8, 2);
             done = true;
@@ -347,11 +241,11 @@ static void renCalibrateTouch() {
 ***************************************************************************************/
 void _setup_gpio() {
     // SD card via SDIO (SD_MMC wrapper in lib/HAL)
-    SD.setPins(REN_SD_CLK, REN_SD_CMD, REN_SD_D0);
+    SD.setPins(ACCRETION_SD_CLK, ACCRETION_SD_CMD, ACCRETION_SD_D0);
 
     // Vibration motor: keep it off (Bruce has no driver for it)
-    pinMode(REN_VIB_PIN, OUTPUT);
-    digitalWrite(REN_VIB_PIN, LOW);
+    pinMode(ACCRETION_VIB_PIN, OUTPUT);
+    digitalWrite(ACCRETION_VIB_PIN, LOW);
 
     // Touch chip
     pinMode(XPT2046_SPI_CONFIG_CS_GPIO_NUM, OUTPUT);
@@ -370,13 +264,11 @@ void _setup_gpio() {
 void _post_setup_gpio() {
     // Brightness control must be initialised after the TFT
     pinMode(TFT_BL, OUTPUT);
-    ledcAttach(TFT_BL, REN_BL_FREQ, REN_BL_BITS);
+    ledcAttach(TFT_BL, ACCRETION_BL_FREQ, ACCRETION_BL_BITS);
     ledcWrite(TFT_BL, 255);
 
-    renSdSelfTest();
-
     // Touch calibration: first boot (no saved data) or finger held on the screen while booting
-    if (renTouchHeldAtBoot() || !renLoadTouchCal()) renCalibrateTouch();
+    if (accretionTouchHeldAtBoot() || !accretionLoadTouchCal()) accretionCalibrateTouch();
 }
 
 /*********************************************************************
@@ -424,10 +316,10 @@ void InputHandler(void) {
             }
             // rotation == 1 (landscape, default): no transform
 
-#if REN_TOUCH_INVERT_X
+#if ACCRETION_TOUCH_INVERT_X
             t.x = tftWidth - t.x;
 #endif
-#if REN_TOUCH_INVERT_Y
+#if ACCRETION_TOUCH_INVERT_Y
             t.y = (tftHeight + 20) - t.y;
 #endif
 
@@ -453,7 +345,7 @@ void InputHandler(void) {
 void powerOff() {
     ledcWrite(TFT_BL, 0);
     tft.writecommand(0x10); // ILI9341 SLPIN
-    digitalWrite(REN_VIB_PIN, LOW);
+    digitalWrite(ACCRETION_VIB_PIN, LOW);
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, LOW);
     esp_deep_sleep_start();
 }

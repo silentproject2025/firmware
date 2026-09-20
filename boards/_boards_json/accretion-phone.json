@@ -7,7 +7,7 @@
     },
     "core": "esp32",
     "extra_flags": [
-      "-DREN_PHONE",
+      "-DACCRETION_PHONE",
       "-DBOARD_HAS_PSRAM",
       "-DARDUINO_USB_CDC_ON_BOOT=1",
       "-DARDUINO_USB_MODE=1",
@@ -37,7 +37,7 @@
     "arduino",
     "espidf"
   ],
-  "name": "Ren Phone (ESP32-S3, 16MB flash, OPI PSRAM)",
+  "name": "Accretion Phone (ESP32-S3, 16MB flash, OPI PSRAM)",
   "upload": {
     "flash_size": "16MB",
     "maximum_ram_size": 327680,
