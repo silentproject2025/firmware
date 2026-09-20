@@ -16,6 +16,7 @@
 #include "core/utils.h"
 #include <Arduino.h>
 #include <globals.h>
+#include <math.h>
 #include <interface.h>
 
 // SD card SDIO pins (1-bit mode)
@@ -39,6 +40,176 @@
 // it keeps the touch chip independent from the hardware SPI controllers that
 // are shared between the display and the external radio modules.
 CYD28_TouchR touch(320, 240);
+
+// ---------------------------------------------------------------------------
+// Touch calibration (XPT2046)
+// The default CYD28_TouchR_CAL_* values are tuned for the CYD, not for this
+// panel, so the first boot runs a 4-corner calibration. The result is stored in
+// LittleFS. To redo it later, keep a finger on the screen while the phone boots.
+// ---------------------------------------------------------------------------
+#define REN_CAL_FILE "/renTouchCal"
+#define REN_CAL_MARGIN 20
+#define REN_CAL_TIMEOUT_MS 120000
+#define REN_CAL_MIN_SPAN 1000 // min raw distance between the two calibrated edges
+
+static bool renCalValid(int xmin, int xmax, int ymin, int ymax) {
+    if (abs(xmax - xmin) < REN_CAL_MIN_SPAN || abs(ymax - ymin) < REN_CAL_MIN_SPAN) return false;
+    if (xmin < -1500 || xmin > 5600 || xmax < -1500 || xmax > 5600) return false;
+    if (ymin < -1500 || ymin > 5600 || ymax < -1500 || ymax > 5600) return false;
+    return true;
+}
+
+static bool renLoadTouchCal() {
+    File f = LittleFS.open(REN_CAL_FILE, "r");
+    if (!f) return false;
+    int v[5];
+    for (int i = 0; i < 5; i++) {
+        String line = f.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) {
+            f.close();
+            return false;
+        }
+        v[i] = line.toInt();
+    }
+    f.close();
+    if (!renCalValid(v[0], v[1], v[2], v[3])) return false;
+    touch.setCalibration(v[0], v[1], v[2], v[3], v[4] != 0);
+    Serial.printf("Touch cal loaded: X %d..%d  Y %d..%d  swap=%d\n", v[0], v[1], v[2], v[3], v[4]);
+    return true;
+}
+
+static void renSaveTouchCal(int xmin, int xmax, int ymin, int ymax, bool swap) {
+    File f = LittleFS.open(REN_CAL_FILE, "w");
+    if (!f) return;
+    f.printf("%d\n%d\n%d\n%d\n%d\n", xmin, xmax, ymin, ymax, swap ? 1 : 0);
+    f.close();
+}
+
+// true while the finger stays down for ~1.2 s right at boot
+static bool renTouchHeldAtBoot() {
+    if (!touch.touched()) return false;
+    uint32_t t0 = millis();
+    while (millis() - t0 < 1200) {
+        if (!touch.touched()) return false;
+        delay(20);
+    }
+    return true;
+}
+
+static void renDrawTarget(int x, int y, uint16_t color) {
+    tft.drawFastHLine(x - 10, y, 21, color);
+    tft.drawFastVLine(x, y - 10, 21, color);
+    tft.drawCircle(x, y, 6, color);
+}
+
+// Wait for a press, average the raw readings, wait for release.
+// Returns false only on timeout.
+static bool renCaptureRaw(uint32_t deadline, int16_t &rx, int16_t &ry) {
+    while (true) {
+        while (!touch.touched()) {
+            if (millis() > deadline) return false;
+            delay(10);
+        }
+        int32_t sx = 0, sy = 0;
+        int n = 0, seen = 0;
+        while (touch.touched() && n < 20) {
+            CYD28_TS_Point p = touch.getPointRaw();
+            if (seen < 4) seen++; // first samples are noisy, skip them
+            else {
+                sx += p.x;
+                sy += p.y;
+                n++;
+            }
+            delay(12);
+        }
+        while (touch.touched()) {
+            if (millis() > deadline) return false;
+            delay(10);
+        }
+        delay(150); // debounce
+        if (n >= 8) {
+            rx = sx / n;
+            ry = sy / n;
+            return true;
+        }
+        // too short / bouncy tap: ask again
+    }
+}
+
+static void renCalibrateTouch() {
+    uint8_t oldRotation = bruceConfigPins.rotation;
+    tft.setRotation(1); // calibrate in landscape, independent of the saved rotation
+    const int W = tft.width();
+    const int H = tft.height();
+    const int m = REN_CAL_MARGIN;
+    // order: 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+    const int tx[4] = {m, W - m, m, W - m};
+    const int ty[4] = {m, m, H - m, H - m};
+    bool done = false;
+
+    for (int attempt = 0; attempt < 3 && !done; attempt++) {
+        int16_t rx[4], ry[4];
+        bool timeout = false;
+        uint32_t deadline = millis() + REN_CAL_TIMEOUT_MS;
+
+        for (int i = 0; i < 4 && !timeout; i++) {
+            tft.fillScreen(TFT_BLACK);
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            tft.drawCentreString("Kalibrasi Touch", W / 2, H / 2 - 20, 2);
+            tft.drawCentreString("Sentuh titik + (pakai ujung pena/kuku)", W / 2, H / 2 + 4, 1);
+            renDrawTarget(tx[i], ty[i], TFT_YELLOW);
+            if (!renCaptureRaw(deadline, rx[i], ry[i])) timeout = true;
+            else renDrawTarget(tx[i], ty[i], TFT_GREEN);
+        }
+        if (timeout) break;
+
+        // Which raw axis moves along the screen's X axis? (top-left -> top-right)
+        bool swap = (abs(ry[1] - ry[0]) + abs(ry[3] - ry[2])) > (abs(rx[1] - rx[0]) + abs(rx[3] - rx[2]));
+        if (swap) {
+            for (int i = 0; i < 4; i++) {
+                int16_t t = rx[i];
+                rx[i] = ry[i];
+                ry[i] = t;
+            }
+        }
+
+        // Both pairs of edges must agree on direction and be clearly apart
+        int dxTop = rx[1] - rx[0], dxBot = rx[3] - rx[2];
+        int dyLeft = ry[2] - ry[0], dyRight = ry[3] - ry[1];
+        bool sane = (dxTop * dxBot > 0) && (dyLeft * dyRight > 0) && abs(dxTop) > 400 && abs(dxBot) > 400 &&
+                    abs(dyLeft) > 400 && abs(dyRight) > 400;
+
+        float xl = (rx[0] + rx[2]) / 2.0f, xr = (rx[1] + rx[3]) / 2.0f;
+        float yt = (ry[0] + ry[1]) / 2.0f, yb = (ry[2] + ry[3]) / 2.0f;
+        float kx = (xr - xl) / (float)(W - 2 * m); // raw units per pixel
+        float ky = (yb - yt) / (float)(H - 2 * m);
+        int xmin = lroundf(xl - kx * m), xmax = lroundf(xr + kx * m);
+        int ymin = lroundf(yt - ky * m), ymax = lroundf(yb + ky * m);
+
+        Serial.printf(
+            "Touch cal try %d: X %d..%d  Y %d..%d  swap=%d  sane=%d\n", attempt, xmin, xmax, ymin, ymax, swap, sane
+        );
+
+        tft.fillScreen(TFT_BLACK);
+        if (sane && renCalValid(xmin, xmax, ymin, ymax)) {
+            touch.setCalibration(xmin, xmax, ymin, ymax, swap);
+            renSaveTouchCal(xmin, xmax, ymin, ymax, swap);
+            tft.setTextColor(TFT_GREEN, TFT_BLACK);
+            tft.drawCentreString("Kalibrasi selesai", W / 2, H / 2 - 8, 2);
+            done = true;
+        } else {
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.drawCentreString("Gagal, ulangi...", W / 2, H / 2 - 8, 2);
+        }
+        delay(900);
+    }
+
+    // On failure/timeout the built-in defaults stay active and nothing is saved,
+    // so the calibration is offered again on the next boot.
+    tft.fillScreen(TFT_BLACK);
+    tft.setRotation(oldRotation);
+}
 
 /***************************************************************************************
 ** Function name: _setup_gpio()
@@ -72,6 +243,9 @@ void _post_setup_gpio() {
     pinMode(TFT_BL, OUTPUT);
     ledcAttach(TFT_BL, REN_BL_FREQ, REN_BL_BITS);
     ledcWrite(TFT_BL, 255);
+
+    // Touch calibration: first boot (no saved data) or finger held on the screen while booting
+    if (renTouchHeldAtBoot() || !renLoadTouchCal()) renCalibrateTouch();
 }
 
 /*********************************************************************
