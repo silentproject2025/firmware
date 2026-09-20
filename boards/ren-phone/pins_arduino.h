@@ -113,9 +113,10 @@ static const uint8_t SCK = SPI_SCK_PIN;
 // =============================================
 // Font sizes
 // =============================================
-#define FP 1
-#define FM 2
-#define FG 3
+// Intentionally NOT defined here: the Bruce font-size constants (small/medium/
+// large = 1/2/3) come from include/precompiler_flags.h. This header is pulled
+// into every library through Arduino.h, and generic global macros with those
+// short names collide with library code (FastLED uses `FP` as a type alias).
 
 // =============================================
 // RGB LED - WS2812 on GPIO48
