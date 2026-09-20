@@ -13,6 +13,7 @@
 #include "CYD28_TouchscreenR.h"
 #include "core/bus_HAL.h"
 #include "core/powerSave.h"
+#include "core/sd_functions.h"
 #include "core/utils.h"
 #include <Arduino.h>
 #include <globals.h>
@@ -45,9 +46,11 @@ CYD28_TouchR touch(320, 240);
 // Touch calibration (XPT2046)
 // The default CYD28_TouchR_CAL_* values are tuned for the CYD, not for this
 // panel, so the first boot runs a 4-corner calibration. The result is stored in
-// LittleFS. To redo it later, keep a finger on the screen while the phone boots.
+// LittleFS and on the SD card (/ren_touch.conf). To redo it later, keep a finger
+// on the screen while the phone boots.
 // ---------------------------------------------------------------------------
-#define REN_CAL_FILE "/renTouchCal"
+#define REN_CAL_FILE "/renTouchCal"      // LittleFS copy
+#define REN_CAL_SD_FILE "/ren_touch.conf" // SD card copy
 #define REN_CAL_MARGIN 20
 #define REN_CAL_TIMEOUT_MS 120000
 #define REN_CAL_MIN_SPAN 1000 // min raw distance between the two calibrated edges
@@ -59,12 +62,16 @@ static bool renCalValid(int xmin, int xmax, int ymin, int ymax) {
     return true;
 }
 
-static bool renLoadTouchCal() {
-    File f = LittleFS.open(REN_CAL_FILE, "r");
+// Read 5 values (xmin, xmax, ymin, ymax, swap) from a calibration file.
+// Accepts "key=value" lines as well as plain numbers, one per line.
+static bool renReadCalFile(FS &fs, const char *path, int v[5]) {
+    File f = fs.open(path, FILE_READ);
     if (!f) return false;
-    int v[5];
     for (int i = 0; i < 5; i++) {
         String line = f.readStringUntil('\n');
+        line.trim();
+        int eq = line.indexOf('=');
+        if (eq >= 0) line = line.substring(eq + 1);
         line.trim();
         if (line.length() == 0) {
             f.close();
@@ -73,17 +80,103 @@ static bool renLoadTouchCal() {
         v[i] = line.toInt();
     }
     f.close();
-    if (!renCalValid(v[0], v[1], v[2], v[3])) return false;
+    return renCalValid(v[0], v[1], v[2], v[3]);
+}
+
+static bool renWriteCalFile(FS &fs, const char *path, int xmin, int xmax, int ymin, int ymax, bool swap) {
+    File f = fs.open(path, FILE_WRITE);
+    if (!f) return false;
+    f.printf("xmin=%d\nxmax=%d\nymin=%d\nymax=%d\nswap=%d\n", xmin, xmax, ymin, ymax, swap ? 1 : 0);
+    f.close();
+    return true;
+}
+
+static bool renSdReady() { return sdcardMounted || setupSdCard(); }
+
+// SD card is checked first, then LittleFS. Whichever copy is missing gets re-created.
+static bool renLoadTouchCal() {
+    int v[5];
+    bool sd = renSdReady();
+    bool fromSd = sd && renReadCalFile(SD, REN_CAL_SD_FILE, v);
+    bool fromFlash = !fromSd && renReadCalFile(LittleFS, REN_CAL_FILE, v);
+    if (!fromSd && !fromFlash) return false;
+
     touch.setCalibration(v[0], v[1], v[2], v[3], v[4] != 0);
-    Serial.printf("Touch cal loaded: X %d..%d  Y %d..%d  swap=%d\n", v[0], v[1], v[2], v[3], v[4]);
+    Serial.printf(
+        "Touch cal loaded from %s: X %d..%d  Y %d..%d  swap=%d\n",
+        fromSd ? "SD" : "LittleFS",
+        v[0],
+        v[1],
+        v[2],
+        v[3],
+        v[4]
+    );
+    // keep both copies in sync
+    if (fromFlash && sd) renWriteCalFile(SD, REN_CAL_SD_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
+    if (fromSd && !LittleFS.exists(REN_CAL_FILE)) renWriteCalFile(LittleFS, REN_CAL_FILE, v[0], v[1], v[2], v[3], v[4] != 0);
     return true;
 }
 
 static void renSaveTouchCal(int xmin, int xmax, int ymin, int ymax, bool swap) {
-    File f = LittleFS.open(REN_CAL_FILE, "w");
-    if (!f) return;
-    f.printf("%d\n%d\n%d\n%d\n%d\n", xmin, xmax, ymin, ymax, swap ? 1 : 0);
-    f.close();
+    bool okFlash = renWriteCalFile(LittleFS, REN_CAL_FILE, xmin, xmax, ymin, ymax, swap);
+    bool sd = renSdReady();
+    bool okSd = sd && renWriteCalFile(SD, REN_CAL_SD_FILE, xmin, xmax, ymin, ymax, swap);
+    Serial.printf("Touch cal saved: LittleFS=%d SD=%d (%s)\n", okFlash, okSd, REN_CAL_SD_FILE);
+}
+
+// ---------------------------------------------------------------------------
+// SD card self-test. Bruce keeps bruce.conf (theme, colors, settings) on LittleFS and
+// copies it to the SD card only when the card is mounted. If nothing ever shows up on
+// the card, the mount or the write is failing - this reports which one.
+// ---------------------------------------------------------------------------
+static void renShowSdError(const char *l1, const char *l2) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.drawCentreString(l1, tft.width() / 2, tft.height() / 2 - 16, 2);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawCentreString(l2, tft.width() / 2, tft.height() / 2 + 8, 1);
+    delay(2500);
+    tft.fillScreen(TFT_BLACK);
+}
+
+static bool renWriteTest(FS &fs, const char *path) {
+    File f = fs.open(path, FILE_WRITE);
+    size_t n = f ? f.print("ok") : 0;
+    if (f) f.close();
+    fs.remove(path);
+    return n == 2;
+}
+
+static void renSdSelfTest() {
+    // 1) LittleFS: bruce.conf is written here FIRST. If this fails, nothing reaches the SD card either.
+    bool flashOk = renWriteTest(LittleFS, "/ren_fs_test.tmp");
+    Serial.printf(
+        "[FS] LittleFS used %u / %u bytes, write test=%d, bruce.conf=%d\n",
+        (unsigned)LittleFS.usedBytes(),
+        (unsigned)LittleFS.totalBytes(),
+        flashOk,
+        LittleFS.exists("/bruce.conf")
+    );
+    if (!flashOk) renShowSdError("Flash (LittleFS) gagal ditulis", "bruce.conf tidak bisa disimpan");
+
+    // 2) SD card mount + write
+    bool mounted = sdcardMounted || setupSdCard();
+    Serial.printf("[SD] mounted=%d (CLK=%d CMD=%d D0=%d)\n", mounted, REN_SD_CLK, REN_SD_CMD, REN_SD_D0);
+    if (!mounted) {
+        renShowSdError("SD card tidak terbaca", "Cek kabel SDIO, pull-up, format FAT32");
+        return;
+    }
+    bool sdWriteOk = renWriteTest(SD, "/ren_sd_test.tmp");
+    bool confOnSd = SD.exists("/bruce.conf");
+    Serial.printf(
+        "[SD] type=%d size=%llu MB, write test=%d, bruce.conf=%d\n",
+        (int)SD.cardType(),
+        (unsigned long long)(SD.cardSize() / (1024ULL * 1024ULL)),
+        sdWriteOk,
+        confOnSd
+    );
+    if (!sdWriteOk) renShowSdError("SD card gagal ditulis", "Kartu ke-mount tapi tidak bisa menulis");
+    else if (!confOnSd) renShowSdError("bruce.conf belum ada di SD", "Salinan config ke SD gagal dibuat");
 }
 
 // true while the finger stays down for ~1.2 s right at boot
@@ -243,6 +336,8 @@ void _post_setup_gpio() {
     pinMode(TFT_BL, OUTPUT);
     ledcAttach(TFT_BL, REN_BL_FREQ, REN_BL_BITS);
     ledcWrite(TFT_BL, 255);
+
+    renSdSelfTest();
 
     // Touch calibration: first boot (no saved data) or finger held on the screen while booting
     if (renTouchHeldAtBoot() || !renLoadTouchCal()) renCalibrateTouch();
